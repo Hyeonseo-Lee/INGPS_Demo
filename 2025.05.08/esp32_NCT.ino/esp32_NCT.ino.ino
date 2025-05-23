@@ -3,6 +3,9 @@
 #include <WiFiClientSecure.h>
 #include <ArduinoJson.h>
 #include "credentials.h"
+#include <OneWire.h>            // DS18B20 통신
+#include <DallasTemperature.h>  // DS18B20 온도 측정
+
 
 // NTC Thermistor configuration
 #define NTC_PIN       36        // Analog pin connected to thermistor divider
