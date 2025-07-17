@@ -105,7 +105,7 @@ void loop() {
                   macAddress.c_str(), temp);
   }
 
-  delay(500);
+  delay(1000);
 }
 
 void connectWiFi() {
