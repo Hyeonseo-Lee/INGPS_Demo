@@ -1,0 +1,150 @@
+% CSV 파일 읽기
+data = readtable('measures_v2.csv');
+
+% 샘플링 주기 (데이터셋은 2Hz → 0.5초)
+dt = 0.5; 
+time = (0:height(data)-1) * dt;  % 시간 벡터 생성
+
+ambient       = data.ambient;
+coolant       = data.coolant;
+pm            = data.pm;
+stator_yoke   = data.stator_yoke;
+stator_tooth  = data.stator_tooth;
+stator_winding= data.stator_winding;
+
+motor_speed = data.motor_speed;  % 모터 속도
+torque      = data.torque;       % 토크
+
+ud = data.u_d;   % d축 전압
+uq = data.u_q;   % q축 전압
+id = data.i_d;   % d축 전류
+iq = data.i_q;   % q축 전류
+profile_id = data.profile_id;
+
+%% profile_id 별로 테이블 분리 (등장 순서 유지)
+pids = unique(profile_id, 'stable');   % 위→아래 등장 순서 유지
+profiles = struct([]);                 % 결과를 담을 구조체 배열
+
+for k = 1:numel(pids)
+    pid = pids(k);
+    idx = (profile_id == pid);         % 해당 profile 행 인덱스
+    Tpid = data(idx, :);               % 원본 테이블에서 슬라이스
+    Tpid.time_abs = time(idx)';        % 전체 시간축 기준 절대시간
+    Tpid.time_rel = (0:height(Tpid)-1)' * dt;   % 프로파일 내 상대시간(0부터)
+    
+    profiles(k).pid = pid;
+    profiles(k).table = Tpid;          % 테이블 통째로 저장
+    profiles(k).N = height(Tpid);      % 샘플 수
+end
+
+%% ---- 모든 profile에 대해 같은 열 순서 + 시간 열 추가 ----
+vars = {'u_q','coolant','stator_winding','u_d','stator_tooth','motor_speed', ...
+        'i_d','i_q','pm','stator_yoke','ambient','torque'};
+
+profileTables = containers.Map('KeyType','double','ValueType','any');   % pid -> table
+profileMatrices = containers.Map('KeyType','double','ValueType','any'); % pid -> numeric matrix
+
+for k = 1:numel(profiles)
+    pid  = profiles(k).pid;
+    Tpid = profiles(k).table;
+
+    % 시간 + 12개 열 선택
+    Tsel = Tpid(:, vars);
+    Tsel.time = Tpid.time_rel;                      % 시간 열 추가
+    Tsel = movevars(Tsel, 'time', 'Before', 'u_q'); % time을 첫 열로 이동
+
+    % 저장
+    profileTables(pid)   = Tsel;
+    profileMatrices(pid) = Tsel{:,:};               % 숫자 행렬로 저장
+end
+
+% % 예시
+% T52 = profileTables(52);  % profile_id=17 테이블 (첫 열이 time)
+% X17 = profileMatrices(17); % profile_id=17 숫자 행렬
+
+%% ===== 프로파일별 그래프 자동 생성 =====
+% 기본은 현재 만든 프로파일 전부 사용
+pids_to_plot = [profiles.pid];
+
+% 저장 폴더
+outDir = 'fig_profiles';
+if ~exist(outDir, 'dir'); mkdir(outDir); end
+
+% (옵션) 너무 길면 다운샘플링
+ds = 1;  % 1: 그대로, 2: 1/2, 5: 1/5 …
+
+for pid = pids_to_plot
+    T = profileTables(pid);   % time + 12개 열
+    t = T.time(1:ds:end);
+
+    % 전압/전류 크기
+    u_mag = hypot(T.u_d(1:ds:end), T.u_q(1:ds:end));
+    i_mag = hypot(T.i_d(1:ds:end), T.i_q(1:ds:end));
+
+    % 신호 준비
+    u_d = T.u_d(1:ds:end);   u_q = T.u_q(1:ds:end);
+    i_d = T.i_d(1:ds:end);   i_q = T.i_q(1:ds:end);
+
+    coolant        = T.coolant(1:ds:end);
+    stator_winding = T.stator_winding(1:ds:end);
+    stator_tooth   = T.stator_tooth(1:ds:end);
+    stator_yoke    = T.stator_yoke(1:ds:end);
+    pm             = T.pm(1:ds:end);
+    ambient        = T.ambient(1:ds:end);
+
+    motor_speed = T.motor_speed(1:ds:end);
+    torque      = T.torque(1:ds:end);
+
+    % === 하나의 Figure에 5개 타일로 묶기 (프로파일당 1개 이미지) ===
+    f = figure('Visible','off','Position',[100 100 1300 900]);
+    tl = tiledlayout(f, 3, 2, 'Padding','compact', 'TileSpacing','compact');
+    title(tl, sprintf('Profile %d', pid), 'FontWeight','bold');
+
+    % 1) 전압
+    nexttile;
+    plot(t, u_d, 'LineWidth', 1.1); hold on;
+    plot(t, u_q, 'LineWidth', 1.1);
+    plot(t, u_mag, 'LineWidth', 1.4);
+    grid on; xlabel('time (s)'); ylabel('Voltage');
+    legend({'u_d','u_q','|u|'}, 'Location','best'); title('Voltages');
+
+    % 2) 전류
+    nexttile;
+    plot(t, i_d, 'LineWidth', 1.1); hold on;
+    plot(t, i_q, 'LineWidth', 1.1);
+    plot(t, i_mag, 'LineWidth', 1.4);
+    grid on; xlabel('time (s)'); ylabel('Current');
+    legend({'i_d','i_q','|i|'}, 'Location','best'); title('Currents');
+
+    % 3) 온도 (가로 2칸)
+    nexttile([1 2]);
+    plot(t, coolant, 'LineWidth', 1.0); hold on;
+    plot(t, stator_winding, 'LineWidth', 1.0);
+    plot(t, stator_tooth, 'LineWidth', 1.0);
+    plot(t, stator_yoke, 'LineWidth', 1.0);
+    plot(t, pm, 'LineWidth', 1.2);
+    plot(t, ambient, '--', 'LineWidth', 1.0);
+    grid on; xlabel('time (s)'); ylabel('Temp');
+    legend({'coolant','stator\_winding','stator\_tooth','stator\_yoke','pm','ambient'}, ...
+        'Location','bestoutside', 'NumColumns',3);
+    title('Temperatures');
+
+    % 4) 속도
+    nexttile;
+    plot(t, motor_speed, 'LineWidth', 1.2);
+    grid on; xlabel('time (s)'); ylabel('Speed');
+    title('Motor Speed');
+
+    % 5) 토크
+    nexttile;
+    plot(t, torque, 'LineWidth', 1.2);
+    grid on; xlabel('time (s)'); ylabel('Torque');
+    title('Torque');
+
+    % 파일 저장 (PNG 1장/프로파일)
+    outPath = fullfile(outDir, sprintf('profile_%d.png', pid));
+    exportgraphics(tl, outPath, 'Resolution', 150);
+    close(f);
+end
+
+disp('완료: fig_profiles 폴더에 프로파일별 PNG 저장됨.');
